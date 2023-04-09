@@ -4,6 +4,7 @@ html, body {
   margin: 0;
   height: 100%;
 }
+
 #map {
   position: absolute;
   top: 0;
@@ -12,23 +13,27 @@ html, body {
 }
 
 .address-overlay {
-  background-color: rgba(255, 255, 255, 0.8);
-  color: gray;
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  background-color: white;
+  border-radius: 10px;
+  box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.5);
   font-size: 14px;
-  padding: 5px;
-  border-radius: 5px;
-  position: relative;
+  line-height: 1.5;
+  max-width: 250px;
 }
 
-.address-overlay::after {
-  content: '';
-  position: absolute;
-  bottom: -6px;
-  left: 50%;
-  margin-left: -3px;
-  border-width: 6px;
-  border-style: solid;
-  border-color: rgba(0, 0, 0, 0.8) transparent transparent transparent;
+.address-overlay button {
+  border: none;
+  background-color: transparent;
+  color: #007aff;
+  font-weight: bold;
+  margin-top: 10px;
+  cursor: pointer;
 }
 
 .close-btn {
@@ -41,5 +46,91 @@ html, body {
   padding: 3px 8px;
   margin-left: 5px;
   border-radius: 3px;
+  cursor: pointer;
+}
+
+.content {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 10px;
+  background-color: white;
+  border-radius: 10px;
+  box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.5);
+  max-width: 250px;
+}
+
+.content h2 {
+  margin: 0 0 10px;
+  font-size: 16px;
+}
+#address-overlay {
+  background-color: white;
+}
+
+
+.content p {
+  margin: 0 0 5px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.routeStyle {
+  stroke: rgba(255, 165, 0, 0.8);
+  stroke-width: 3;
+}
+
+.trip-info {
+  font-size: 14px;
+  line-height: 1.5;
+  max-width: 250px;
+}
+
+.trip-info p {
+  margin-bottom: 5px;
+}
+
+.overlay-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.overlay {
+  background-color: white;
+  border-radius: 10px;
+  box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.5);
+  padding: 20px;
+  max-width: 350px;
+  width: 90%;
+}
+
+.overlay-title {
+  font-size: 18px;
+  font-weight: bold;
+  margin-bottom: 10px;
+}
+
+.overlay-content {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.overlay-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  border: none;
+  background-color: transparent;
+  font-size: 24px;
   cursor: pointer;
 }

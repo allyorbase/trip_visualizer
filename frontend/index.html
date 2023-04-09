@@ -12,7 +12,15 @@
     </style>
   </head>
   <body>
-     <div id="map" class="map"></div>
+    <div id="overlay-container" class="overlay-container" style="display: none;">
+      <div id="overlay" class="overlay">
+        <h2 id="overlay-title" class="overlay-title">Trip Info</h2>
+        <div id="overlay-content" class="overlay-content"></div>
+        <button id="overlay-close" class="overlay-close">&times;</button>
+      </div>
+    </div>
+    <div id="address-overlay"></div>
+    <div id="map" class="map"></div>
     <!-- Pointer events polyfill for old browsers, see https://caniuse.com/#feat=pointer -->
     <script src="https://cdn.jsdelivr.net/npm/elm-pep@1.0.6/dist/elm-pep.js"></script>
     <script type="module" src="main.js"></script>

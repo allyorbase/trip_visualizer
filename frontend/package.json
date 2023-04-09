@@ -1,5 +1,5 @@
 {
-  "name": "trip_visualizer",
+  "name": "vite",
   "version": "1.0.0",
   "scripts": {
     "start": "vite",

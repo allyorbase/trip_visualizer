@@ -1,16 +1,17 @@
-import BingMaps from 'ol/source/BingMaps.js';
-import Map from 'ol/Map.js';
-import TileLayer from 'ol/layer/Tile.js';
-import View from 'ol/View.js';
-import { useGeographic } from 'ol/proj.js';
-import Feature from 'ol/Feature.js';
-import Point from 'ol/geom/Point.js';
-import VectorLayer from 'ol/layer/Vector.js';
-import VectorSource from 'ol/source/Vector.js';
-import { Icon, Style } from 'ol/style.js';
-import { LineString } from 'ol/geom.js';
-import Overlay from 'ol/Overlay';
-import { Fill, Stroke, Text } from 'ol/style';
+import "ol/ol.css";
+import BingMaps from "ol/source/BingMaps";
+import Feature from "ol/Feature";
+import LineString from "ol/geom/LineString";
+import Map from "ol/Map";
+import View from "ol/View";
+import { Tile as TileLayer, Vector as VectorLayer } from "ol/layer";
+import { OSM, Vector } from "ol/source";
+import { Stroke, Style, Circle, Fill } from "ol/style";
+import VectorSource from 'ol/source/Vector';
+import { fromLonLat, transform } from 'ol/proj';
+import Point from "ol/geom/Point";
+import Overlay from "ol/Overlay";
+
 
 async function loadTokens() {
   const response = await fetch('creds.json');
@@ -22,220 +23,322 @@ async function loadTokens() {
 }
 const { openRouteServiceApiKey, bingMapsApiKey } = await loadTokens();
 
-useGeographic(); // Set the default projection to EPSG:4326
+// Rate Limiting
+const rateLimitMax = 40;
+const rateLimitInterval = 60 * 1000;
+let tokensOpenRouteService = rateLimitMax;
+let tokensNominatim = rateLimitMax;
+let lastTokenRefill = Date.now();
 
-const styles = [
-  'CanvasDark',
-];
-const layers = [];
-let i, ii;
-layers.push(
-  new TileLayer({
-    visible: false,
-    preload: Infinity,
-    source: new BingMaps({
-      key: bingMapsApiKey,
-      imagerySet: 'CanvasDark',
+function refillTokens() {
+  const currentTime = Date.now();
+  if (currentTime - lastTokenRefill >= rateLimitInterval) {
+    tokensOpenRouteService = rateLimitMax;
+    tokensNominatim = rateLimitMax;
+    lastTokenRefill = currentTime;
+  }
+}
+
+function consumeTokenOpenRouteService() {
+  if (tokensOpenRouteService > 0) {
+    tokensOpenRouteService -= 1;
+    return true;
+  }
+  return false;
+}
+
+function consumeTokenNominatim() {
+  if (tokensNominatim > 0) {
+    tokensNominatim -= 1;
+    return true;
+  }
+  return false;
+}
+
+async function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+let map = new Map({
+  target: "map",
+  layers: [
+    new TileLayer({
+      source: new BingMaps({
+        key: bingMapsApiKey,
+        imagerySet: "CanvasDark",
+      }),
     }),
-  })
-);
-const map = new Map({
-  layers: layers,
-  target: 'map',
+  ],
   view: new View({
-    center: [-122.4194, 37.7749], // San Francisco
+    center: fromLonLat([-122.4194, 37.7749]),
     zoom: 13,
   }),
 });
 
-layers[0].setVisible(styles[0] === 'CanvasDark');
+const routeLayer = new VectorLayer({
+  source: new VectorSource(),
+});
 
-function rateLimiter(limit, interval) {
-  let count = 0;
-  return async function () {
-    if (count < limit) {
-      count++;
-    } else {
-      await new Promise((resolve) => setTimeout(resolve, interval * 1000));
-      count = 1;
-    }
-  };
+const markersLayer = new VectorLayer({
+  source: new VectorSource(),
+});
+
+const addressOverlay = new Overlay({
+  element: document.getElementById("address-overlay"),
+  positioning: "bottom-center",
+  stopEvent: false,
+  offset: [0, -10]
+});
+
+map.addOverlay(addressOverlay);
+
+
+function getOrangeHue(index) {
+  const hue = ((index + 1) * 35) % 360;
+  return `hsl(${hue}, 100%, 50%)`;
 }
 
-const limiter = rateLimiter(40, 60); // 40 requests per 60 seconds
-
-// Create a route layer to store the routes
-const routeSource = new VectorSource();
-const routeLayer = new VectorLayer({
-  source: routeSource,
-});
-map.addLayer(routeLayer);
-
+function showTripInfo(tripData) {
+  const addressOverlay = document.getElementById('address-overlay');
+  addressOverlay.innerHTML = `
+    <h3>${tripData.startTime}</h3>
+    <p>${tripData.startLocation.address}</p>
+    <h3>${tripData.endTime}</h3>
+    <p>${tripData.endLocation.address}</p>
+  `;
+  addressOverlay.style.display = 'block';
+}
 async function drawRoute(coord1, coord2, index) {
-  const apiKey = openRouteServiceApiKey; // Replace with your OpenRouteService API key
+  // Check if the route is already cached
+  const cacheKey = `${coord1[0]},${coord1[1]}|${coord2[0]},${coord2[1]}`;
+  const cachedRoute = localStorage.getItem(cacheKey);
+  if (cachedRoute) {
+    const coordinates = JSON.parse(cachedRoute);
+    const transformedCoordinates = coordinates.map(coord => transform(coord, 'EPSG:4326', 'EPSG:3857'));
+    const route = new Feature({
+      geometry: new LineString(transformedCoordinates),
+      index: index,
+    });
+    const orangeLineStyle = new Style({
+      stroke: new Stroke({
+        color: getOrangeHue(index),
+        width: 3,
+      }),
+    });
+    route.setStyle(orangeLineStyle);
+    return route;
+  }
+
+  const apiKey = openRouteServiceApiKey;
   const url = `https://api.openrouteservice.org/v2/directions/driving-car?api_key=${apiKey}&start=${coord1[0]},${coord1[1]}&end=${coord2[0]},${coord2[1]}`;
 
-  const response = await fetch(url);
+  const response = await fetchOpenRouteService(url);
   const data = await response.json();
   const coordinates = data.features[0].geometry.coordinates;
 
+  // Cache the route
+  localStorage.setItem(cacheKey, JSON.stringify(coordinates));
+
+  const transformedCoordinates = coordinates.map(coord => transform(coord, 'EPSG:4326', 'EPSG:3857'));
   const route = new Feature({
-    geometry: new LineString(coordinates),
+    geometry: new LineString(transformedCoordinates),
     index: index,
   });
-
   const orangeLineStyle = new Style({
     stroke: new Stroke({
       color: getOrangeHue(index),
-      width: 3
-    })
+      width: 3,
+    }),
   });
-
   route.setStyle(orangeLineStyle);
-  routeLayer.getSource().addFeature(route);
+  return route;
 }
 
-function getOrangeHue(index, brighter = false) {
-  const hue = (index * 30) % 360;
-  const lightness = brighter ? 70 : 50;
-  return `hsl(${hue}, 100%, ${lightness}%)`;
+async function reverseGeocode(coord) {
+  const cacheKey = `address_${coord[0]}_${coord[1]}`;
+  const cachedAddress = localStorage.getItem(cacheKey);
+  if (cachedAddress) {
+    return cachedAddress;
+  }
+
+  const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${coord[1]}&lon=${coord[0]}&addressdetails=1`;
+  const response = await fetchNominatim(url);
+  const data = await response.json();
+  const address = data.address;
+  const addressText = `${address.road || ''} ${address.house_number || ''}, ${address.city || ''}, ${address.state || ''} ${address.postcode || ''}`.trim();
+
+  localStorage.setItem(cacheKey, addressText);
+  return addressText;
 }
 
-async function drawLocations() {
+
+async function fetchOpenRouteService(url) {
+  while (!consumeTokenOpenRouteService()) {
+    refillTokens();
+    await sleep(100);
+  }
+
+  return fetch(url);
+}
+
+async function fetchNominatim(url) {
+  while (!consumeTokenNominatim()) {
+    refillTokens();
+    await sleep(100);
+  }
+
+  return fetch(url);
+}
+
+const routeSource = new VectorSource();
+const markerSource = new VectorSource();
+
+
+
+async function init() {
   const response = await fetch('trips.json');
   const data = await response.json();
   const tripInfo = data.payload.tripInfo;
 
-  const points = [];
-  let index = 0;
-  for (let trip of tripInfo) {
+  // Fetch addresses for start and end locations
+  for (const trip of tripInfo) {
+    const startCoord = [trip.startLocation.lon, trip.startLocation.lat];
+    const endCoord = [trip.endLocation.lon, trip.endLocation.lat];
+    trip.startLocation.address = await reverseGeocode(startCoord);
+    trip.endLocation.address = await reverseGeocode(endCoord);
+  }
+
+  // Add markers and routes
+  const markerFeatures = [];
+  const routeFeatures = [];
+
+  const routeDrawingPromises = tripInfo.map(async (trip, i) => {
     const startCoord = [trip.startLocation.lon, trip.startLocation.lat];
     const endCoord = [trip.endLocation.lon, trip.endLocation.lat];
 
-    const startAddress = await getAddress(startCoord);
-    const endAddress = await getAddress(endCoord);
+    // Add start marker
+    const startMarker = new Feature({
+      geometry: new Point(fromLonLat(startCoord)),
+      name: 'Start',
+      tripData: trip,
+    });
+    const startMarkerStyle = new Style({
+      image: new Circle({
+        radius: 8,
+        fill: new Fill({
+          color: '#7cb342',
+        }),
+        stroke: new Stroke({
+          color: '#fff',
+          width: 2,
+        }),
+      }),
+    });
+    startMarker.setStyle(startMarkerStyle);
+    markerFeatures.push(startMarker);
 
-    points.push(new Feature({
-      geometry: new Point(startCoord),
-      index: index,
-      type: 'start',
-      address: startAddress
-    }));
-    points.push(new Feature({
-      geometry: new Point(endCoord),
-      index: index,
-      type: 'end',
-      address: endAddress
-    }));
+    // Add end marker
+    const endMarker = new Feature({
+      geometry: new Point(fromLonLat(endCoord)),
+      name: 'End',
+      tripData: trip,
+    });
+    const endMarkerStyle = new Style({
+      image: new Circle({
+        radius: 8,
+        fill: new Fill({
+          color: '#e53935',
+        }),
+        stroke: new Stroke({
+          color: '#fff',
+          width: 2,
+        }),
+      }),
+    });
+    endMarker.setStyle(endMarkerStyle);
+    markerFeatures.push(endMarker);
 
-    await limiter();
-    await drawRoute(startCoord, endCoord, index); // Draw orange lines between start and end locations with a slightly different hue
-    index++;
-  }
-
-  async function getAddress(coord) {
-    const lonLat = coord;
-    const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lonLat[1]}&lon=${lonLat[0]}&zoom=18&addressdetails=1`);
-    const data = await response.json();
-    return data.display_name;
-  }
-
-  const greenDot = new Style({
-    image: new Icon({
-      color: 'green',
-      src: 'https://openlayers.org/en/latest/examples/data/dot.svg'
-    }),
-    text: new Text({
-      font: '12px sans-serif',
-      offsetY: -20,
-      fill: new Fill({ color: 'white' }),
-      stroke: new Stroke({ color: 'black', width: 2 }),
-    }),
+    // Draw route and push the resulting Feature to routeFeatures
+    const routeFeature = await drawRoute(startCoord, endCoord, i);
+    routeFeature.on('click', () => {
+      showOverlay(generateTripInfoHTML(i));
+      dimOtherRoutes(i);
+    });
+    routeFeatures.push(routeFeature);
   });
 
-  const vectorSource = new VectorSource({
-    features: points
+  await Promise.all(routeDrawingPromises);
+
+  // Add marker layer and route layer to map
+  markerSource.addFeatures(markerFeatures);
+  routeSource.addFeatures(routeFeatures);
+
+  const markerLayer = new VectorLayer({
+    source: markerSource,
   });
 
-  const vectorLayer = new VectorLayer({
-    source: vectorSource,
-    style: function (feature, resolution) {
-      const isSelected = feature.get('isSelected');
-      greenDot.getImage().setOpacity(isSelected ? 1 : 0.5);
-      greenDot.getText().setText(`${feature.get('index')}-${feature.get('type')}`);
-      return greenDot;
+  const routeLayer = new VectorLayer({
+    source: routeSource,
+    style: (feature) => {
+      const index = feature.get('index');
+      const orangeLineStyle = new Style({
+        stroke: new Stroke({
+          color: getOrangeHue(index),
+          width: 3
+        })
+      });
+      return orangeLineStyle;
     },
   });
 
-  map.addLayer(vectorLayer);
-
-  // Add an overlay for the address display
-  const addressOverlay = new Overlay({
-    element: document.createElement('div'),
-    positioning: 'bottom-center',
-    stopEvent: false,
-    offset: [0, -10],
-  });
-
-  addressOverlay.getElement().className = 'address-overlay';
-  map.addOverlay(addressOverlay);
-
-  // Add interactivity
-  map.on('pointermove', function (evt) {
-    const feature = map.forEachFeatureAtPixel(evt.pixel, (feature) => feature);
-    if (feature) {
-      this.getTargetElement().style.cursor = 'pointer';
-    } else {
-      this.getTargetElement().style.cursor = '';
-    }
-  });
-
-  map.on('singleclick', function (evt) {
-    const feature = map.forEachFeatureAtPixel(evt.pixel, (feature) => feature);
-    if (feature) {
-      const coordinate = feature.getGeometry().getCoordinates();
-      const address = feature.get('address');
-
-      // Set the address overlay content and position
-      addressOverlay.getElement().innerHTML = `<div>${address}</div><button class="close-btn">Close</button>`;
-      addressOverlay.setPosition(coordinate);
-
-      // Close button functionality
-      const closeButton = addressOverlay.getElement().querySelector('.close-btn');
-      closeButton.addEventListener('click', function () {
-        addressOverlay.setPosition(undefined);
-      });
-    } else {
-      addressOverlay.setPosition(undefined);
-    }
-  });
-
-  map.on('pointermove', function (evt) {
-    const feature = map.forEachFeatureAtPixel(evt.pixel, (feature) => feature);
-    vectorSource.getFeatures().forEach((f) => {
-      f.set('isSelected', false);
-    });
-
-    if (feature) {
-      this.getTargetElement().style.cursor = 'pointer';
-      feature.set('isSelected', true);
-      const index = feature.get('index');
-      const route = routeLayer.getSource().getFeatures().find(f => f.get('index') === index);
-      if (route) {
-        const currentStyle = route.getStyle();
-        currentStyle.getStroke().setColor(getOrangeHue(index, true));
-        route.setStyle(currentStyle);
-      }
-    } else {
-      this.getTargetElement().style.cursor = '';
-      routeLayer.getSource().getFeatures().forEach((route, i) => {
-        const currentStyle = route.getStyle();
-        currentStyle.getStroke().setColor(getOrangeHue(i));
-        route.setStyle(currentStyle);
-      });
-    }
-    vectorLayer.changed(); // This is needed to force a redraw of the vectorLayer
-  });
-
+  map.addLayer(routeLayer);
+  map.addLayer(markerLayer);
 }
-drawLocations();
+
+init();
+
+// Add this function to show the overlay
+function showOverlay(tripInfo) {
+  document.getElementById('overlay-container').style.display = 'flex';
+  document.getElementById('overlay-content').innerHTML = tripInfo;
+}
+
+// Add this function to hide the overlay
+function hideOverlay() {
+  document.getElementById('overlay-container').style.display = 'none';
+}
+
+// Add this event listener to the close button
+document.getElementById('overlay-close').addEventListener('click', hideOverlay);
+
+// Modify the 'drawRoute' function to add the event listener to the route
+// route.on('click', () => {
+//   showOverlay(generateTripInfoHTML(index));
+//   dimOtherRoutes(index);
+// });
+
+// // Modify the 'addCircle' function to add the event listener to the circle
+// circleFeature.on('click', () => {
+//   showOverlay(generateTripInfoHTML(index));
+//   dimOtherRoutes(index);
+// });
+
+// Handle click events on the map
+map.on('singleclick', async function (evt) {
+  const clickedFeature = map.forEachFeatureAtPixel(evt.pixel, function (feature) {
+    return feature;
+  });
+
+  if (clickedFeature && clickedFeature.get('tripData')) {
+    const tripData = clickedFeature.get('tripData');
+    showTripInfo(tripData);
+    addressOverlay.setPosition(clickedFeature.getGeometry().getCoordinates());
+  } else {
+    addressOverlay.setPosition(undefined);
+  }
+});
+
+// Close address overlay
+document.getElementById("overlay-close").addEventListener("click", function () {
+  addressOverlay.setPosition(undefined);
+});
