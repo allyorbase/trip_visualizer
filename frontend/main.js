@@ -12,11 +12,12 @@ import { fromLonLat, transform } from 'ol/proj';
 import Point from "ol/geom/Point";
 import Overlay from "ol/Overlay";
 
-const rateLimitMax = 40;
+const rateLimitMaxPerApi = 20;
 const rateLimitInterval = 60 * 1000;
-let tokensOpenRouteService = rateLimitMax;
-let tokensNominatim = rateLimitMax;
-let lastTokenRefill = Date.now();
+let openRouteServiceTokens = rateLimitMaxPerApi;
+let nominatimTokens = rateLimitMaxPerApi;
+let lastOpenRouteServiceTokenRefill = Date.now();
+let lastNominatimTokenRefill = Date.now();
 
 async function loadTokens() {
   const response = await fetch('creds.json');
@@ -85,7 +86,6 @@ async function init() {
   const routeDrawingPromises = tripInfo.map(async (trip, i) => {
     const startCoord = [trip.startLocation.lon, trip.startLocation.lat];
     const endCoord = [trip.endLocation.lon, trip.endLocation.lat];
-
     // Add start marker
     const startMarker = new Feature({
       geometry: new Point(fromLonLat(startCoord)),
@@ -135,7 +135,6 @@ async function init() {
       dimOtherRoutes(i);
     });
     routeFeatures.push(routeFeature);
-
   });
 
   await Promise.all(routeDrawingPromises);
@@ -168,24 +167,27 @@ async function init() {
 
 function refillTokens() {
   const currentTime = Date.now();
-  if (currentTime - lastTokenRefill >= rateLimitInterval) {
-    tokensOpenRouteService = rateLimitMax;
-    tokensNominatim = rateLimitMax;
-    lastTokenRefill = currentTime;
+  if (currentTime - lastOpenRouteServiceTokenRefill >= rateLimitInterval) {
+    openRouteServiceTokens = rateLimitMaxPerApi;
+    lastOpenRouteServiceTokenRefill = currentTime;
+  }
+  if (currentTime - lastNominatimTokenRefill >= rateLimitInterval) {
+    nominatimTokens = rateLimitMaxPerApi;
+    lastNominatimTokenRefill = currentTime;
   }
 }
 
 function consumeTokenOpenRouteService() {
-  if (tokensOpenRouteService > 0) {
-    tokensOpenRouteService -= 1;
+  if (openRouteServiceTokens > 0) {
+    openRouteServiceTokens -= 1;
     return true;
   }
   return false;
 }
 
 function consumeTokenNominatim() {
-  if (tokensNominatim > 0) {
-    tokensNominatim -= 1;
+  if (nominatimTokens > 0) {
+    nominatimTokens -= 1;
     return true;
   }
   return false;
@@ -230,8 +232,14 @@ async function drawRoute(coord1, coord2, index) {
   const apiKey = openRouteServiceApiKey
   const url = `https://api.openrouteservice.org/v2/directions/driving-car?api_key=${apiKey}&start=${coord1[0]},${coord1[1]}&end=${coord2[0]},${coord2[1]}`;
 
-  const response = await fetchOpenRouteService(url);
+  while (!consumeTokenOpenRouteService()) {
+    refillTokens();
+    await sleep(100);
+  }
+
+  const response = await fetch(url);
   const data = await response.json();
+
   const coordinates = data.features[0].geometry.coordinates;
 
   // Cache the route
@@ -260,31 +268,19 @@ async function reverseGeocode(coord) {
   }
 
   const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${coord[1]}&lon=${coord[0]}&addressdetails=1`;
-  const response = await fetchNominatim(url);
-  const data = await response.json();
-  const address = data.address;
-  const addressText = `${address.road || ''} ${address.house_number || ''}, ${address.city || ''}, ${address.state || ''} ${address.postcode || ''}`.trim();
 
-  localStorage.setItem(cacheKey, addressText);
-  return addressText;
-}
-
-async function fetchOpenRouteService(url) {
-  while (!consumeTokenOpenRouteService()) {
-    refillTokens();
-    await sleep(100);
-  }
-
-  return fetch(url);
-}
-
-async function fetchNominatim(url) {
   while (!consumeTokenNominatim()) {
     refillTokens();
     await sleep(100);
   }
 
-  return fetch(url);
+  const response = await fetch(url);
+  const data = await response.json();
+  const address = data.address;
+  const addressText = `${address.road || ''} ${address.house_number || ''},${address.city || ''}, ${address.state || ''} ${address.postcode || ''}`.trim();
+
+  localStorage.setItem(cacheKey, addressText);
+  return addressText;
 }
 
 function showOverlay(tripInfo) {
