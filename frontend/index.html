@@ -12,10 +12,16 @@
     </style>
   </head>
   <body>
+    <div id="stats-overlay">
+      <button id="stats-dropdown-button">Statistics</button>
+      <div id="stats-dropdown-content" class="dropdown-content"></div>
+    </div>
+    
     <div id="overlay-container" class="overlay-container" style="display: none;">
       <div id="overlay" class="overlay">
         <h2 id="overlay-title" class="overlay-title">Trip Info</h2>
         <div id="overlay-content" class="overlay-content"></div>
+        <button id="close-btn" class="close-btn">x</button>
         <button id="overlay-close" class="overlay-close">&times;</button>
       </div>
     </div>
