@@ -1,2 +1,6 @@
+trips.py
 *.json
 .DS_STORE
+.gitignore
+__pycache__/
+fetch.sh
